@@ -1,3 +1,9 @@
+#ifndef KWGRAPH_H
+#define KWGRAPH_H
+
+#ifndef KWGRAPH_STRIP_INCLUDES
+// These are the sort of things that people usually add to precompiled headers
+// so we want to give them the option not to have thse includes
 #include <vector>
 #include <queue>
 #include <algorithm>
@@ -6,17 +12,33 @@
 #include <cstdlib>
 #include <ctime>
 
+#endif
+
 namespace KWGraph
 {
 	enum GraphCreationFlags
 	{
-		GraphCreationFlags_Connected  	= (1 << 0),
-		GraphCreationFlags_Directed 	= (1 << 1),
-		GraphCreationFlags_Sparse 		= (1 << 2),
+		GraphCreationFlags_Connected   = (1 << 0),
+		GraphCreationFlags_Directed    = (1 << 1),
+		GraphCreationFlags_Sparse 	   = (1 << 2),
 		// Makes the graph algorithm generate the same graph every time
-		GraphCreationFlags_Consistent 	= (1 << 3),
-		GraphCreationFlags_AllowCycles 	= (1 << 4)
+		GraphCreationFlags_Consistent  = (1 << 3),
+		GraphCreationFlags_AllowCycles = (1 << 4)
 	};	
+
+	enum StorageType
+	{
+		StorageType_None = 0,
+		StorageType_AdjacencyList = 1 << 0,
+		StorageType_AdjacencyMatrix = 1 << 0
+	};
+
+	enum DFSOrder
+	{
+		DFSOrder_PreOrder,
+		DFSOrder_PostOrder
+	};
+
 
 	template <typename T>
 	struct Edge;
@@ -29,7 +51,7 @@ namespace KWGraph
 	{
 		//We're not keeping pointers here because we don't know beforehand the 
 		//number of edges that we have, so a realloc will ruin everything 
-		std::vector< Edge<T> > edges;
+		std::vector<int> edges;
 		T weight;
 		float x;
 		float y;
@@ -39,13 +61,13 @@ namespace KWGraph
 	template <typename T>
 	struct Edge
 	{
-		Edge() : source(NULL), 
-				 destination(NULL), 
-				 directed(true) {}
-		Node<T>* source;
-		Node<T>* destination;
-		T		 weight;	
-		bool 	 directed;
+		Edge() : source(-1), 
+                 destination(-1), 
+                 directed(true) {}
+		int      source;
+		int      destination;
+		T        weight;	
+		bool     directed;
 	};
 
 	namespace
@@ -63,48 +85,31 @@ namespace KWGraph
 	template <typename T>
 	class Graph
 	{
-	public:
-		enum StorageType
-		{
-			StorageType_None = 0,
-			StorageType_AdjacencyList = 1 << 0,
-			StorageType_AdjacencyMatrix = 1 << 0
-		};
-
-		enum DFSOrder
-		{
-			DFSOrder_PreOrder,
-			DFSOrder_PostOrder
-		};
-
 	private:
 		// Keeping a linear matrix gets us a huge performance boost becasuse
 		// it reduces the chances that we get a cache miss when we get an element
-		std::vector< T > 		matrix;
-		std::vector< Node<T> > 	nodes;
-		std::vector< Edge<T> >  edges;
-		StorageType 			storageType;
+		std::vector< T >        m_matrix;
+		std::vector< Node<T> >  m_nodes;
+		std::vector< Edge<T> >  m_edges;
+		StorageType             m_storageType;
 	public:
 		// We want to keep both an adjacency matrix and a adjacency list 
 		// For instance this way we can compare different implementations
 		// for a certain algorithm
 
-		inline std::vector<T>& GetAdjacencyMatrix() { return matrix; }
-		inline std::vector< Node<T> >& GetNodes() { return nodes; }
-		inline std::vector< Edge<T> >& GetEdges() { return edges; }
-		inline size_t GetNrNodes() { return nodes.size(); }
-		inline size_t GetNrEdges() { return edges.size(); }
+		inline const std::vector<T>& GetAdjacencyMatrix() const { return m_matrix; }
+		inline const std::vector< Node<T> >& GetNodes() const { return m_nodes; }
+		inline const std::vector< Edge<T> >& GetEdges() const { return m_edges; }
+		inline std::vector<T>& GetAdjacencyMatrix() { return m_matrix; }
+		inline std::vector< Node<T> >& GetNodes() { return m_nodes; }
+		inline std::vector< Edge<T> >& GetEdges() { return m_edges; }
 
-		int GetNodeIndex(const Node<T>& node)
-		{
-			typename std::vector< Node< T> >::iterator nodeIt = 
-				std::find(nodes.begin(), nodes.end(), node);
-			return nodeIt - nodes.begin();
-		}
+		inline size_t GetNrNodes() const { return m_nodes.size(); }
+		inline size_t GetNrEdges() const { return m_edges.size(); }
 
-		inline int GetMatrixIndex(int row, int col)
+		inline int GetMatrixIndex(int row, int col) const
 		{
-			int nrNodes = static_cast<int>(nodes.size());
+			int nrNodes = static_cast<int>(m_nodes.size());
 			return row * nrNodes + col;
 		}
 
@@ -114,36 +119,18 @@ namespace KWGraph
 			newNode.weight = weight;
 
 			//TODO handle errors in case the vector cannot resize		
-			nodes.push_back(newNode);
+			m_nodes.push_back(newNode);
 		}
 
 		void AddNode(const Node<T>& node)
 		{
 			//TODO handle errors in case the vector cannot resize
-			nodes.push_back(node);
+			m_nodes.push_back(node);
 		}
 
 		void AddListEdge(Node<T>& source, Node<T>& destination, T weight, bool directed)
 		{
-			Edge<T> newEdge;
-			newEdge.source = &source;
-			newEdge.destination = &destination;
-			newEdge.directed = directed;
-			newEdge.weight = weight;
-			
-			size_t edgeId = edges.size();
-			edges.push_back(newEdge);
-			//TODO handle errors in case the vector cannot resize
-			source.edges.push_back(edges[edgeId]);
-			
-			if(directed)
-			{
-				newEdge.source = &destination;
-				newEdge.destination = &source;
-				edgeId = edges.size();
-				edges.push_back(newEdge);
-				destination.edges.push_back(edges[edgeId]);
-			}
+			AddListEdge(source.id, destination.id, weight, directed);
 		}
 
 		void AddListEdge(Node<T>& source, Node<T>& destination, T weight)
@@ -158,9 +145,24 @@ namespace KWGraph
 
 		void AddListEdge(int sourceId, int destId, T weight, bool directed)
 		{
-			Node<T>& source = nodes[sourceId];
-			Node<T>& destination = nodes[destId];
-			AddListEdge(source, destination, weight, directed);
+			Edge<T> newEdge;
+			newEdge.source = sourceId;
+			newEdge.destination = destId;
+			newEdge.directed = directed;
+			newEdge.weight = weight;
+			size_t edgeId = m_edges.size();
+			m_edges.push_back(newEdge);
+			//TODO handle errors in case the vector cannot resize
+			m_nodes[sourceId].edges.push_back(edgeId);
+			
+			if(directed)
+			{
+				newEdge.source = destId;
+				newEdge.destination = sourceId;
+				edgeId = m_edges.size();
+				m_edges.push_back(newEdge);
+				m_nodes[destId].edges.push_back(edgeId);
+			}
 		}
 
 		void AddListEdge(int sourceId, int destId, T weight)
@@ -177,32 +179,32 @@ namespace KWGraph
 		{
 			// We're using size_t here to avoid a cast
 			// There is no way this can be negative so there is no side effect
-			size_t expectedSize = nodes.size() * nodes.size();
+			size_t expectedSize = m_nodes.size() * m_nodes.size();
 
 			// Because of branch prediction we can safely ignore the slowdown
 			// that this if introduces because the chances of this being true
 			// are very slim
-			if(matrix.size() != expectedSize)
+			if(m_matrix.size() != expectedSize)
 				AllocAdjacencyMatrix();
 			
-			size_t nrNodes = nodes.size();
+			size_t nrNodes = m_nodes.size();
 			int srcRow = static_cast<int>(sourceId / (float)nrNodes);
 			int dstRow = static_cast<int>(destId / (float)nrNodes);
 			int srcCol = sourceId % nrNodes;
 			int dstCol = destId % nrNodes;
 			int srcToDstIndex = GetMatrixIndex(srcRow, dstCol);
-			matrix[srcToDstIndex] = weight;
+			m_matrix[srcToDstIndex] = weight;
 			if(directed)
 			{
 				int dstToSrcIndex = GetMatrixIndex(dstRow, srcCol);
-				matrix[dstToSrcIndex] = weight;
+				m_matrix[dstToSrcIndex] = weight;
 			}
 		}
 
-		void AddMatrixEdge(Node<T>& source, Node<T>& destination, T weight, bool directed)
+		void AddMatrixEdge(Node<T>& src, Node<T>& dest, T weight, bool directed)
 		{
-			int sourceId = GetNodeIndex(source);
-			int destinationId = GetNodeIndex(destination);
+			int sourceId = src.id;
+			int destinationId = dest.id;
 			AddMatrixEdge(sourceId, destinationId, weight, directed);
 		}
 
@@ -216,14 +218,14 @@ namespace KWGraph
 			AddMatrixEdge(source, destination, 1, true);
 		}
 
-		void AddEdge(Node<T>& source, Node<T>& destination, T weight, bool directed)
+		void AddEdge(Node<T>& source, Node<T>& dest, T weight, bool directed)
 		{
-			assert(storageType != StorageType_None);
+			assert(m_storageType != StorageType_None);
 
-			if(storageType & StorageType_AdjacencyList)
-				AddListEdge(source, destination, weight, directed);
-			if(storageType & StorageType_AdjacencyMatrix)
-				AddMatrixEdge(source, destination, weight, directed);
+			if(m_storageType & StorageType_AdjacencyList)
+				AddListEdge(source, dest, weight, directed);
+			if(m_storageType & StorageType_AdjacencyMatrix)
+				AddMatrixEdge(source, dest, weight, directed);
 		}
 
 		void AddEdge(Node<T>& source, Node<T>& destination, T weight)
@@ -239,11 +241,11 @@ namespace KWGraph
 
 		void AddEdge(int sourceId, int destId, T weight, bool directed)
 		{
-			assert(storageType != StorageType_None);
+			assert(m_storageType != StorageType_None);
 	
-			if(storageType & StorageType_AdjacencyList)
+			if(m_storageType & StorageType_AdjacencyList)
 				AddListEdge(sourceId, destId, weight, directed);
-			if(storageType & StorageType_AdjacencyMatrix)
+			if(m_storageType & StorageType_AdjacencyMatrix)
 				AddMatrixEdge(sourceId, destId, weight, directed);
 		}
 
@@ -260,9 +262,9 @@ namespace KWGraph
 		void AllocAdjacencyMatrix()
 		{
 			// Make sure to avoid the realloc
-			matrix.resize(0);
+			m_matrix.resize(0);
 			//TODO handle errors in case the vector cannot resize
-			matrix.resize(nodes.size() * nodes.size());
+			m_matrix.resize(m_nodes.size() * m_nodes.size());
 		}
 
 
@@ -275,7 +277,7 @@ namespace KWGraph
 			bool isConnected 	= flags & GraphCreationFlags_Connected;
 			bool isConsistent 	= flags & GraphCreationFlags_Consistent;		
 
-			storageType = storage;
+			m_storageType = storage;
 
 			if(!isRandomEngineOn)
 			{
@@ -286,12 +288,13 @@ namespace KWGraph
 				srand(seed);
 			}
 
-			nodes.resize(size);	
+			m_nodes.resize(size);	
+			for(size_t nodeIt = 0; nodeIt < size; ++nodeIt)
+				m_nodes[nodeIt].id = nodeIt;		
 
 			for(size_t nodeIt = 0; nodeIt < size; ++nodeIt)
 			{
-				Node<T>& newNode = nodes[nodeIt];
-				newNode.id = nodeIt;
+				Node<T>& newNode = m_nodes[nodeIt];			
 				newNode.weight = T(rand() / (float)RAND_MAX);
 				float edgeChance = (isSparse) 	? 0.2f
 												: 0.8f;
@@ -307,8 +310,17 @@ namespace KWGraph
 						AddEdge(nodeIt, edgeIt, edgeWeight, isDirected);
 					}
 				}
+
 				if(isConnected && newNode.edges.size() == 0)
-					AddEdge(nodeIt, rand() % size);
+				{
+					int connectionIndex = rand() % size;
+					T edgeWeight = T(rand() / (float)RAND_MAX);
+
+					while(!isCyclic && connectionIndex == nodeIt)
+						connectionIndex = rand() % size;
+
+					AddEdge(nodeIt, connectionIndex, edgeWeight, isDirected);
+				}
 			}
 		}
 
@@ -329,12 +341,14 @@ namespace KWGraph
 				visitor->OnStartVisit();
 				visitor->OnStartComponentVisit();
 			}
+
 			while(!visitQueue.empty())
 			{
 				Node<T>* crNode = visitQueue.front();
 				visitQueue.pop();
 				if(visitor)
 					visitor->OnBeginNodeProcess(*crNode);
+				
 				if(visitedNodes[crNode->id])
 				{
 					if(visitor)
@@ -345,10 +359,13 @@ namespace KWGraph
 				visitedNodes[crNode->id] = true;
 				if(visitor)		
 					visitor->OnNodeProcess(*crNode);
+
 				for(size_t edgeIt = 0; edgeIt < crNode->edges.size(); ++edgeIt)
 				{
-					Edge<T>& edge = crNode->edges[edgeIt];
-					visitQueue.push(edge.destination);
+					int edgeIdx = crNode->edges[edgeIt];
+					Edge<T>& crEdge = m_edges[edgeIdx];
+					Node<T>& nextNode = m_nodes[crEdge.destination];
+					visitQueue.push(&nextNode);
 				}
 				visitor->OnEndNodeProcess(*crNode);
 
@@ -356,6 +373,7 @@ namespace KWGraph
 				{
 					if(visitor)
 						visitor->OnEndComponentVisit();
+
 					for(size_t nodeIt = 0; nodeIt < nrNodes; ++nodeIt)
 					{
 						if(visitedNodes[nodeIt] == 0)
@@ -368,17 +386,73 @@ namespace KWGraph
 					}
 				}
 			}
+
 			if(visitor)
 			{
 				visitor->OnEndComponentVisit();
 				visitor->OnEndVisit();
 			}
-
 		}
 
-		void DFS(GraphVisitor<T>* visitor)
+		void DFSStep(const Node<T>& node, GraphVisitor<T>* visitor, 
+                     std::vector<bool>& visited, DFSOrder order)
 		{
+			if(visited[node.id])
+			{
+				if(visitor)
+					visitor->OnNodeAlreadyVisited(node);
+				return;
+			}
 			
+			visited[node.id] = true;
+			if(visitor)
+				visitor->OnBeginNodeProcess(node);
+			
+			if(order == DFSOrder_PreOrder && visitor)
+				visitor->OnNodeProcess(node);
+
+			for(size_t edgeIt = 0; edgeIt < node.edges.size(); ++edgeIt)
+			{
+				int edgeIdx = node.edges[edgeIt];
+				Edge<T>& edge = m_edges[edgeIdx];
+				Node<T>& nextNode = m_nodes[edge.destination];
+				DFSStep(nextNode, visitor, visited, order);
+			}
+			
+			if(visitor)
+			{
+				if(order == DFSOrder_PostOrder)
+					visitor->OnNodeProcess(node);
+				visitor->OnEndNodeProcess(node);
+			}
+		}
+
+		void DFS(GraphVisitor<T>* visitor, DFSOrder order)
+		{
+			if(visitor)
+				visitor->OnStartVisit();
+
+			std::vector<bool> visited;
+			visited.resize(m_nodes.size(), false);
+			bool allNodesVisited = false;			
+			while(!allNodesVisited)
+			{
+				allNodesVisited = true;
+				for(size_t nodeIt = 0 ; nodeIt < visited.size(); ++nodeIt)
+				{
+					if(visited[nodeIt])
+						continue;
+					if(visitor)
+						visitor->OnStartComponentVisit();
+					DFSStep(m_nodes[nodeIt], visitor, visited, order);
+					allNodesVisited = false;
+					if(visitor)
+						visitor->OnEndComponentVisit();
+				}
+			}
+			
+			if(visitor)
+				visitor->OnEndVisit();
 		}
 	};
 
@@ -426,4 +500,4 @@ namespace KWGraph
 	};
 }
 
-
+#endif
