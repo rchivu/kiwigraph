@@ -20,7 +20,7 @@ namespace KWGraph
 	{
 		GraphCreationFlags_Connected   = (1 << 0),
 		GraphCreationFlags_Directed    = (1 << 1),
-		GraphCreationFlags_Sparse 	   = (1 << 2),
+		GraphCreationFlags_Sparse      = (1 << 2),
 		// Makes the graph algorithm generate the same graph every time
 		GraphCreationFlags_Consistent  = (1 << 3),
 		GraphCreationFlags_AllowCycles = (1 << 4)
@@ -271,11 +271,11 @@ namespace KWGraph
 		static void SetRandomEngineSeed(int seed) { commonSeed = seed; }		
 		void InitializeGraph(int size, int flags, StorageType storage)
 		{
-			bool isSparse 		= flags & GraphCreationFlags_Sparse;
-			bool isCyclic 		= flags & GraphCreationFlags_AllowCycles;
-		 	bool isDirected 	= flags & GraphCreationFlags_Directed;
-			bool isConnected 	= flags & GraphCreationFlags_Connected;
-			bool isConsistent 	= flags & GraphCreationFlags_Consistent;		
+			bool isSparse 	   = flags & GraphCreationFlags_Sparse;
+			bool isCyclic 	   = flags & GraphCreationFlags_AllowCycles;
+			bool isDirected    = flags & GraphCreationFlags_Directed;
+			bool isConnected   = flags & GraphCreationFlags_Connected;
+			bool isConsistent  = flags & GraphCreationFlags_Consistent;		
 
 			m_storageType = storage;
 
