@@ -3,13 +3,11 @@
 int main()
 {
 	KWGraph::IntGraph graph;
-	KWGraph::IntPrinter printer;
+	KWGraph::IntPrinter printer(&graph);
 	graph.InitializeGraph(8, 	KWGraph::GraphCreationFlags_Connected, 
 								KWGraph::StorageType_AdjacencyList);
 	
 	graph.BFS(&printer);
-	printf("\n");
 	graph.DFS(&printer, KWGraph::DFSOrder_PreOrder);
-	printf("\n");		
 	graph.DFS(&printer, KWGraph::DFSOrder_PostOrder);
 }

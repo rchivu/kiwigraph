@@ -16,6 +16,9 @@
 
 namespace KWGraph
 {
+	static const int ROOT_ID = -1;
+	static const int INVALID_ID = -2;
+
 	enum GraphCreationFlags
 	{
 		GraphCreationFlags_Connected   = (1 << 0),
@@ -49,12 +52,14 @@ namespace KWGraph
 	template <typename T>
 	struct Node
 	{
+		Node() : parent(INVALID_ID) {}
 		//We're not keeping pointers here because we don't know beforehand the 
 		//number of edges that we have, so a realloc will ruin everything 
 		std::vector<int> edges;
 		T weight;
 		float x;
 		float y;
+		int parent;
 		int id;
 	};
 
@@ -69,6 +74,7 @@ namespace KWGraph
 		T        weight;	
 		bool     directed;
 	};
+
 
 	namespace
 	{
@@ -92,7 +98,19 @@ namespace KWGraph
 		std::vector< Node<T> >  m_nodes;
 		std::vector< Edge<T> >  m_edges;
 		StorageType             m_storageType;
+		void                    InvalidateParents()
+		{
+			size_t nrNodes = m_nodes.size();
+			for(size_t nodeIt = 0; nodeIt < nrNodes; ++nodeIt)
+			{
+				m_nodes[nodeIt].parent = INVALID_ID;
+			}
+		}
 	public:
+		
+		typedef std::vector< Edge<T> > EdgeVector;
+		typedef std::vector< Node<T> > NodeVector;
+
 		// We want to keep both an adjacency matrix and a adjacency list 
 		// For instance this way we can compare different implementations
 		// for a certain algorithm
@@ -324,24 +342,55 @@ namespace KWGraph
 			}
 		}
 
+		void BFSAddNextComponentNode(GraphVisitor<T>* visitor, 
+                                     std::queue<Node<T>*>& visitQueue,
+                                     std::vector<bool>& visitedNodes)
+		{
+			typename KWGraph::Graph<T>::NodeVector& graphNodes = GetNodes();
+			size_t nrNodes = graphNodes.size();
+			if(visitor)
+				visitor->OnEndComponentVisit();
+
+			for(size_t nodeIt = 0; nodeIt < nrNodes; ++nodeIt)
+			{
+				if(visitedNodes[nodeIt] == false)
+				{
+					if(visitor)
+						visitor->OnStartComponentVisit();
+					graphNodes[nodeIt].parent = ROOT_ID;
+					visitQueue.push(&graphNodes[nodeIt]);
+					break;
+				}
+			}
+		}
+
 		void BFS(GraphVisitor<T>* visitor)
 		{
 			size_t nrNodes = GetNrNodes();
 			if(nrNodes == 0)
 				return;
 
+			InvalidateParents();
+
 			std::queue < Node<T>* > visitQueue;
 			std::vector<bool> visitedNodes;
-			std::vector< Node<T> >& graphNodes = GetNodes();
-			visitQueue.push(&graphNodes[0]);
-			
-			visitedNodes.resize(nrNodes);
+			typename KWGraph::Graph<T>::NodeVector& graphNodes = GetNodes();
+			int visitSource = 0;
+			if(visitor)
+			{
+				visitSource = visitor->GetVisitSource();
+				visitSource = (visitSource < 0) ? 0 : visitSource;				
+			}
+			visitQueue.push(&graphNodes[visitSource]);
+			graphNodes[visitSource].parent = ROOT_ID;
+			visitedNodes.resize(nrNodes, false);
 			if(visitor)
 			{
 				visitor->OnStartVisit();
 				visitor->OnStartComponentVisit();
 			}
 
+			
 			while(!visitQueue.empty())
 			{
 				Node<T>* crNode = visitQueue.front();
@@ -353,6 +402,8 @@ namespace KWGraph
 				{
 					if(visitor)
 						visitor->OnNodeAlreadyVisited(*crNode);
+					if(visitQueue.empty())
+						BFSAddNextComponentNode(visitor, visitQueue, visitedNodes);
 					continue;
 				}
 
@@ -365,25 +416,15 @@ namespace KWGraph
 					int edgeIdx = crNode->edges[edgeIt];
 					Edge<T>& crEdge = m_edges[edgeIdx];
 					Node<T>& nextNode = m_nodes[crEdge.destination];
+					if(nextNode.parent == INVALID_ID)
+						nextNode.parent = crNode->id;
 					visitQueue.push(&nextNode);
 				}
 				visitor->OnEndNodeProcess(*crNode);
 
 				if(visitQueue.empty())
 				{
-					if(visitor)
-						visitor->OnEndComponentVisit();
-
-					for(size_t nodeIt = 0; nodeIt < nrNodes; ++nodeIt)
-					{
-						if(visitedNodes[nodeIt] == 0)
-						{
-							if(visitor)
-								visitor->OnStartComponentVisit();
-							visitQueue.push(&graphNodes[nodeIt]);
-							break;
-						}
-					}
+					BFSAddNextComponentNode(visitor, visitQueue, visitedNodes);
 				}
 			}
 
@@ -394,8 +435,8 @@ namespace KWGraph
 			}
 		}
 
-		void DFSStep(const Node<T>& node, GraphVisitor<T>* visitor, 
-                     std::vector<bool>& visited, DFSOrder order)
+		void DFSStep(Node<T>& node, GraphVisitor<T>* visitor, 
+                     std::vector<bool>& visited, DFSOrder order, int parent)
 		{
 			if(visited[node.id])
 			{
@@ -405,6 +446,7 @@ namespace KWGraph
 			}
 			
 			visited[node.id] = true;
+			node.parent = parent;
 			if(visitor)
 				visitor->OnBeginNodeProcess(node);
 			
@@ -416,7 +458,7 @@ namespace KWGraph
 				int edgeIdx = node.edges[edgeIt];
 				Edge<T>& edge = m_edges[edgeIdx];
 				Node<T>& nextNode = m_nodes[edge.destination];
-				DFSStep(nextNode, visitor, visited, order);
+				DFSStep(nextNode, visitor, visited, order, node.id);
 			}
 			
 			if(visitor)
@@ -429,26 +471,42 @@ namespace KWGraph
 
 		void DFS(GraphVisitor<T>* visitor, DFSOrder order)
 		{
+			size_t nrNodes = m_nodes.size();
+			if(nrNodes == 0)
+				return;
+
+			InvalidateParents();
+
 			if(visitor)
 				visitor->OnStartVisit();
 
 			std::vector<bool> visited;
 			visited.resize(m_nodes.size(), false);
-			bool allNodesVisited = false;			
+			bool allNodesVisited = false;
+			int visitSource;
+			if(visitor)
+				visitSource = visitor->GetVisitSource();
+			visitSource	= (visitSource < 0) ? 0 : visitSource;
+	
 			while(!allNodesVisited)
 			{
 				allNodesVisited = true;
+				
+				if(visitor)
+						visitor->OnStartComponentVisit();
+				if(!visited[visitSource])
+					DFSStep(m_nodes[visitSource], visitor, visited, order, visitSource);
+
 				for(size_t nodeIt = 0 ; nodeIt < visited.size(); ++nodeIt)
 				{
 					if(visited[nodeIt])
 						continue;
-					if(visitor)
-						visitor->OnStartComponentVisit();
-					DFSStep(m_nodes[nodeIt], visitor, visited, order);
-					allNodesVisited = false;
-					if(visitor)
-						visitor->OnEndComponentVisit();
+						
+					DFSStep(m_nodes[nodeIt], visitor, visited, order, nodeIt);
+					allNodesVisited = false;	
 				}
+				if(visitor)
+						visitor->OnEndComponentVisit();
 			}
 			
 			if(visitor)
@@ -459,24 +517,33 @@ namespace KWGraph
 	template<typename T>
 	class GraphVisitor
 	{
+	protected:
+		Graph<T>*   m_graph;
+		int         m_visitSource;
 	public:
+		GraphVisitor(Graph<T>* graph) : m_visitSource(-1),
+                                        m_graph(graph) {}
+		GraphVisitor(Graph<T>* graph, int source) : m_visitSource(source),
+                                                    m_graph(graph) {}
+		void SetVisitSource(int source){m_visitSource = source;}
+		int GetVisitSource(){return m_visitSource;}
 		//Called exactly once at the begining of the visit
-		virtual void OnEndVisit() = 0;
+		virtual void OnEndVisit() {};
 		//Called exactly once at the end of the visit
-		virtual void OnStartVisit() = 0;
+		virtual void OnStartVisit() {};
 		//Called once when a new component is found in the graph
-		virtual void OnEndComponentVisit() = 0;
+		virtual void OnEndComponentVisit() {};
 		//Called once when the visit ends for each separate component
-		virtual void OnStartComponentVisit() = 0;
+		virtual void OnStartComponentVisit() {};
 		//Called when the node has been reached
-		virtual void OnBeginNodeProcess(const Node<T>& node) = 0;
+		virtual void OnBeginNodeProcess(const Node<T>& node) {};
 		//Called when the node is being processed		
-		virtual void OnNodeProcess(const Node<T>& node) = 0;
+		virtual void OnNodeProcess(const Node<T>& node) {};
 		//Called when the node and its' descendents have been processed		
-		virtual void OnEndNodeProcess(const Node<T>& node) = 0;
+		virtual void OnEndNodeProcess(const Node<T>& node) {};
 		//Called when a node that has been already visited is found
 		//Essentially this means we found a cycle in the graph
-		virtual void OnNodeAlreadyVisited(const Node<T>& node) = 0;
+		virtual void OnNodeAlreadyVisited(const Node<T>& node) {};
 	};
 
 	typedef Node<int> IntNode;
@@ -489,14 +556,13 @@ namespace KWGraph
 	class IntPrinter : public IntGraphVisitor
 	{
 	public:
-		virtual void OnEndVisit() {}
-		virtual void OnStartVisit() {}
+		IntPrinter(IntGraph* graph) : IntGraphVisitor(graph){}
+		IntPrinter(IntGraph* graph, int source) : IntGraphVisitor(graph, source){}
+
 		virtual void OnEndComponentVisit() { printf("\n"); }
-		virtual void OnStartComponentVisit() {}
-		virtual void OnBeginNodeProcess(const IntNode& node){}
-		virtual void OnNodeProcess(const IntNode& node) {printf("%d ", node.id);}
-		virtual void OnEndNodeProcess(const IntNode& node) {}
-		virtual void OnNodeAlreadyVisited(const IntNode& node) {}
+		virtual void OnNodeProcess(const IntNode& node) {
+			printf("%d ", node.id);
+		}
 	};
 }
 
