@@ -56,9 +56,9 @@ int main()
 {
 	KWGraph::IntGraph graph;
 	KWGraph::IntPrinter printer(&graph, 1);
-	graph.InitializeGraph(8, 	KWGraph::GraphCreationFlags_Sparse    |
-                                KWGraph::GraphCreationFlags_Connected, 
-                                KWGraph::StorageType_AdjacencyList);
+	graph.InitializeGraph(8,     KWGraph::GraphCreationFlags_Sparse    |
+                                 KWGraph::GraphCreationFlags_Connected, 
+                                 KWGraph::StorageType_AdjacencyList);
 	graph.BFS(&printer);
 
 
