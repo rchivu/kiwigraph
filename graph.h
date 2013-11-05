@@ -4,13 +4,19 @@
 #ifndef KWGRAPH_STRIP_INCLUDES
 // These are the sort of things that people usually add to precompiled headers
 // so we want to give them the option not to have thse includes
-#include <vector>
-#include <queue>
-#include <algorithm>
-#include <assert.h>
-#include <cstdio>
-#include <cstdlib>
-#include <ctime>
+#	include <vector>
+#	include <queue>
+#	include <algorithm>
+#	include <assert.h>
+#	include <cstdio>
+#	include <cstdlib>
+#	include <ctime>
+
+#	if defined(__linux__) || defined(__APPLE__)
+#		include <sys/time.h>
+#		include <string.h>
+#		include <errno.h>
+#	endif
 
 #endif
 
@@ -42,6 +48,12 @@ namespace KWGraph
 		DFSOrder_PostOrder
 	};
 
+	enum NodeAction
+	{
+		NodeAction_Continue,
+		NodeAction_Abort,
+		NodeAction_SkipChildren
+	};
 
 	template <typename T>
 	struct Edge;
@@ -396,12 +408,26 @@ namespace KWGraph
 				Node<T>* crNode = visitQueue.front();
 				visitQueue.pop();
 				if(visitor)
-					visitor->OnBeginNodeProcess(*crNode);
+				{
+					NodeAction action = visitor->OnBeginNodeProcess(*crNode);
+					if(action == NodeAction_Abort)
+						return;
+					if(action == NodeAction_SkipChildren)
+					{
+						if(visitQueue.empty())
+							BFSAddNextComponentNode(visitor, visitQueue, visitedNodes);
+						continue;
+					}
+				}
 				
 				if(visitedNodes[crNode->id])
 				{
 					if(visitor)
-						visitor->OnNodeAlreadyVisited(*crNode);
+					{
+						NodeAction action = visitor->OnNodeAlreadyVisited(*crNode);
+						if(action == NodeAction_Abort)
+							return;
+					}
 					if(visitQueue.empty())
 						BFSAddNextComponentNode(visitor, visitQueue, visitedNodes);
 					continue;
@@ -409,7 +435,17 @@ namespace KWGraph
 
 				visitedNodes[crNode->id] = true;
 				if(visitor)		
-					visitor->OnNodeProcess(*crNode);
+				{
+					NodeAction action = visitor->OnNodeProcess(*crNode);
+					if(action == NodeAction_Abort)
+						return;
+					if(action == NodeAction_SkipChildren)
+					{
+						if(visitQueue.empty())
+							BFSAddNextComponentNode(visitor, visitQueue, visitedNodes);
+						continue;
+					}
+				}
 
 				for(size_t edgeIt = 0; edgeIt < crNode->edges.size(); ++edgeIt)
 				{
@@ -420,7 +456,13 @@ namespace KWGraph
 						nextNode.parent = crNode->id;
 					visitQueue.push(&nextNode);
 				}
-				visitor->OnEndNodeProcess(*crNode);
+				
+				if(visitor)
+				{
+					NodeAction action = visitor->OnEndNodeProcess(*crNode);
+					if(action == NodeAction_Abort)
+						return;
+				}
 
 				if(visitQueue.empty())
 				{
@@ -435,37 +477,55 @@ namespace KWGraph
 			}
 		}
 
-		void DFSStep(Node<T>& node, GraphVisitor<T>* visitor, 
+		NodeAction DFSStep(Node<T>& node, GraphVisitor<T>* visitor, 
                      std::vector<bool>& visited, DFSOrder order, int parent)
 		{
+			bool skipChildren = false;
+
 			if(visited[node.id])
 			{
 				if(visitor)
-					visitor->OnNodeAlreadyVisited(node);
-				return;
+					return visitor->OnNodeAlreadyVisited(node);
 			}
 			
 			visited[node.id] = true;
 			node.parent = parent;
 			if(visitor)
-				visitor->OnBeginNodeProcess(node);
-			
+			{
+				NodeAction action = visitor->OnBeginNodeProcess(node);
+				if(action != NodeAction_Continue)
+					return action;
+			}
 			if(order == DFSOrder_PreOrder && visitor)
-				visitor->OnNodeProcess(node);
-
-			for(size_t edgeIt = 0; edgeIt < node.edges.size(); ++edgeIt)
+			{
+				NodeAction action = visitor->OnNodeProcess(node);
+				if(action != NodeAction_Continue)
+					return action;
+			}
+			
+			for(size_t edgeIt = 0; edgeIt < node.edges.size() && !skipChildren; ++edgeIt)
 			{
 				int edgeIdx = node.edges[edgeIt];
 				Edge<T>& edge = m_edges[edgeIdx];
 				Node<T>& nextNode = m_nodes[edge.destination];
-				DFSStep(nextNode, visitor, visited, order, node.id);
+				NodeAction action = DFSStep(nextNode, visitor, visited, order, node.id);
+				if(action == NodeAction_Abort)
+					return action;
 			}
 			
 			if(visitor)
 			{
+				NodeAction action;
 				if(order == DFSOrder_PostOrder)
-					visitor->OnNodeProcess(node);
-				visitor->OnEndNodeProcess(node);
+				{
+					action = visitor->OnNodeProcess(node);
+					if(action == NodeAction_Abort)
+						return action;
+				}
+
+				action = visitor->OnEndNodeProcess(node);
+				if(action == NodeAction_Abort)
+					return action;
 			}
 		}
 
@@ -501,9 +561,15 @@ namespace KWGraph
 				{
 					if(visited[nodeIt])
 						continue;
-						
-					DFSStep(m_nodes[nodeIt], visitor, visited, order, nodeIt);
-					allNodesVisited = false;	
+
+					allNodesVisited = false;
+	
+					NodeAction action = DFSStep(m_nodes[nodeIt], visitor, visited, order, nodeIt);
+					if(action == NodeAction_Abort)
+					{
+						allNodesVisited = true;
+						break;
+					}	
 				}
 				if(visitor)
 						visitor->OnEndComponentVisit();
@@ -525,25 +591,37 @@ namespace KWGraph
                                         m_graph(graph) {}
 		GraphVisitor(Graph<T>* graph, int source) : m_visitSource(source),
                                                     m_graph(graph) {}
-		void SetVisitSource(int source){m_visitSource = source;}
-		int GetVisitSource(){return m_visitSource;}
+		void SetVisitSource(int source){ m_visitSource = source; }
+		int GetVisitSource(){ return m_visitSource; }
 		//Called exactly once at the begining of the visit
-		virtual void OnEndVisit() {};
+		virtual void OnEndVisit() {}
 		//Called exactly once at the end of the visit
-		virtual void OnStartVisit() {};
+		virtual void OnStartVisit() {}
 		//Called once when a new component is found in the graph
-		virtual void OnEndComponentVisit() {};
+		virtual void OnEndComponentVisit() {}
 		//Called once when the visit ends for each separate component
-		virtual void OnStartComponentVisit() {};
+		virtual void OnStartComponentVisit() {}
 		//Called when the node has been reached
-		virtual void OnBeginNodeProcess(const Node<T>& node) {};
+		virtual NodeAction OnBeginNodeProcess(const Node<T>& node) 
+		{
+			return NodeAction_Continue;
+		}
 		//Called when the node is being processed		
-		virtual void OnNodeProcess(const Node<T>& node) {};
+		virtual NodeAction OnNodeProcess(const Node<T>& node) 
+		{
+			return NodeAction_Continue;
+		}
 		//Called when the node and its' descendents have been processed		
-		virtual void OnEndNodeProcess(const Node<T>& node) {};
+		virtual NodeAction OnEndNodeProcess(const Node<T>& node) 
+		{
+			return NodeAction_Continue;
+		}
 		//Called when a node that has been already visited is found
 		//Essentially this means we found a cycle in the graph
-		virtual void OnNodeAlreadyVisited(const Node<T>& node) {};
+		virtual NodeAction OnNodeAlreadyVisited(const Node<T>& node) 
+		{
+			return NodeAction_Continue;
+		};
 	};
 
 	typedef Node<int> IntNode;
@@ -559,11 +637,102 @@ namespace KWGraph
 		IntPrinter(IntGraph* graph) : IntGraphVisitor(graph){}
 		IntPrinter(IntGraph* graph, int source) : IntGraphVisitor(graph, source){}
 
-		virtual void OnEndComponentVisit() { printf("\n"); }
-		virtual void OnNodeProcess(const IntNode& node) {
+		virtual void OnEndComponentVisit() 
+		{
+			printf("\n"); 
+		}
+
+		virtual NodeAction OnNodeProcess(const IntNode& node) 
+		{
 			printf("%d ", node.id);
+			return NodeAction_Continue;
 		}
 	};
+
+#ifndef KWGRAPH_SKIP_MINI_PROFILER
+	namespace
+	{
+		typedef long long ProfileDataType;
+		struct ProfileData
+		{
+			//This only supposed to display static text from .DATA
+			//so no need to make a deep copy with a std::string
+			const char* name;
+			ProfileDataType time;
+			bool inProgress;
+		};
+		typedef std::vector<ProfileData> ProfileDataList;
+		typedef std::vector<ProfileData>::iterator ProfileDataIt;
+		
+		ProfileDataList g_profileData;
+	
+
+#if defined(__linux__) || defined(__APPLE__)			
+		static inline ProfileDataType GetProfileTime()
+		{
+
+			struct timeval crTime;
+			int err = gettimeofday(&crTime, NULL);
+			if(err == 0)
+				return crTime.tv_usec + crTime.tv_sec * 1000000;
+			else 
+				return -1;
+		}
+		
+		static inline float GetSeconds(ProfileDataType time)
+		{
+			return time * 0.0000001f;
+		}
+#elif defined(_WIN32)
+#include <Mmsystem.h>
+		static inline ProfileDataType GetProfileTime()
+		{
+			return timegettime();
+		}
+		
+		static inline float GetSeconds(ProfileDataType time)
+		{
+			return time * 0.001f;
+		}
+#endif
+	};
+
+	static inline void StartMiniProfile(int profileId, const char* name)
+	{
+		ProfileDataType profileTime = GetProfileTime();
+		if(profileId >= g_profileData.size())
+			g_profileData.resize(profileId + 1);
+	
+		if(profileTime < 0)
+			printf("Failed to start profile: %s\n", strerror(errno));
+	
+		ProfileData& profileData = g_profileData[profileId];
+		profileData.time = profileTime;
+		profileData.name = name;
+		profileData.inProgress = profileData.time >= 0;
+	}
+	
+	static inline void EndMiniProfile(int profileId)
+	{
+		ProfileData& profileData = g_profileData[profileId];
+		if(!profileData.inProgress)
+			return;
+
+		ProfileDataType profileTime = GetProfileTime() - profileData.time;
+		profileData.inProgress = false;
+		if(profileData.name)
+            printf("Total time spent in test %s: %lld ms\n", 
+                                             profileData.name, profileTime);
+		else
+			printf("Total time spent in test: %lld ms\n", profileTime);
+	}
+
+	static inline bool IsInProgress(int profileId)
+	{
+		return g_profileData[profileId].inProgress;
+	}
+
+#endif
 }
 
 #endif

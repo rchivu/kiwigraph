@@ -6,6 +6,12 @@ enum PathState
 	PathState_Uninitialized,
 	PathState_NoPath,
 };
+enum PathProfileId
+{
+	PathProfileId_BFS
+};
+
+static const char* profileNames[] = {"BFS path"};
 
 template <typename T>
 class BFSShortestPath : public KWGraph::GraphVisitor<T>
@@ -20,6 +26,13 @@ public:
 		m_pathState(PathState_Uninitialized) {}
 
 	PathState GetPathState(){ return m_pathState; }
+
+	virtual void OnStartVisit() 
+	{
+		const char* profileName = profileNames[PathProfileId_BFS];
+        KWGraph::StartMiniProfile(PathProfileId_BFS, profileName);
+	}		
+	
 	virtual void OnEndComponentVisit() 
 	{
 		//We always start at the source, so if the path is uninitialized when we
@@ -29,9 +42,11 @@ public:
 			printf("There is no path between %d and %d\n", 
 				KWGraph::GraphVisitor<T>::m_visitSource, m_destination);	
 			m_pathState = PathState_NoPath;
+			if(KWGraph::IsInProgress(PathProfileId_BFS))
+				KWGraph::EndMiniProfile(PathProfileId_BFS);
 		}
 	}
-	virtual void OnNodeProcess(const KWGraph::Node<T>& node)
+	virtual KWGraph::NodeAction OnNodeProcess(const KWGraph::Node<T>& node)
 	{
 		if(node.id == m_destination && m_pathState == PathState_Uninitialized)
 		{
@@ -45,24 +60,29 @@ public:
 			{
 				printf("%d ", crNodeId);
 				const KWGraph::Node<T>& crNode = nodes[crNodeId];
-				crNodeId = crNode.parent; 
+				crNodeId = crNode.parent;
 			}
 			printf("\n");
+			KWGraph::EndMiniProfile(PathProfileId_BFS);
+			return KWGraph::NodeAction_Abort;
 		}
+		return KWGraph::NodeAction_Continue;
 	}
 };
+
+
+
+
  
 int main()
 {
 	KWGraph::IntGraph graph;
 	KWGraph::IntPrinter printer(&graph, 1);
-	graph.InitializeGraph(8,     KWGraph::GraphCreationFlags_Sparse    |
+	graph.InitializeGraph(10000,KWGraph::GraphCreationFlags_Sparse    |
+                                 KWGraph::GraphCreationFlags_Consistent|
                                  KWGraph::GraphCreationFlags_Connected, 
                                  KWGraph::StorageType_AdjacencyList);
-	graph.BFS(&printer);
-
-
-
+	
 	BFSShortestPath<int> bfsShortPath(&graph, 1, 5);
 	graph.BFS(&bfsShortPath);		
 }
