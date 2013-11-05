@@ -8,10 +8,11 @@ enum PathState
 };
 enum PathProfileId
 {
-	PathProfileId_BFS
+	PathProfileId_BFSPath,
+	PathProfileId_BFSTotal
 };
 
-static const char* profileNames[] = {"BFS path"};
+static const char* profileNames[] = {"BFS Path", "BFS Total"};
 
 template <typename T>
 class BFSShortestPath : public KWGraph::GraphVisitor<T>
@@ -29,8 +30,8 @@ public:
 
 	virtual void OnStartVisit() 
 	{
-		const char* profileName = profileNames[PathProfileId_BFS];
-        KWGraph::StartMiniProfile(PathProfileId_BFS, profileName);
+		const char* profileName = profileNames[PathProfileId_BFSPath];
+        KWGraph::StartMiniProfile(PathProfileId_BFSPath, profileName);
 	}		
 	
 	virtual void OnEndComponentVisit() 
@@ -42,8 +43,8 @@ public:
 			printf("There is no path between %d and %d\n", 
 				KWGraph::GraphVisitor<T>::m_visitSource, m_destination);	
 			m_pathState = PathState_NoPath;
-			if(KWGraph::IsInProgress(PathProfileId_BFS))
-				KWGraph::EndMiniProfile(PathProfileId_BFS);
+			if(KWGraph::IsInProgress(PathProfileId_BFSPath))
+				KWGraph::EndMiniProfile(PathProfileId_BFSPath);
 		}
 	}
 	virtual KWGraph::NodeAction OnNodeProcess(const KWGraph::Node<T>& node)
@@ -63,16 +64,12 @@ public:
 				crNodeId = crNode.parent;
 			}
 			printf("\n");
-			KWGraph::EndMiniProfile(PathProfileId_BFS);
+			KWGraph::EndMiniProfile(PathProfileId_BFSPath);
 			return KWGraph::NodeAction_Abort;
 		}
 		return KWGraph::NodeAction_Continue;
 	}
 };
-
-
-
-
  
 int main()
 {
@@ -83,6 +80,10 @@ int main()
                                  KWGraph::GraphCreationFlags_Connected, 
                                  KWGraph::StorageType_AdjacencyList);
 	
+	const char* profileName = profileNames[PathProfileId_BFSTotal];
+    KWGraph::StartMiniProfile(PathProfileId_BFSTotal, profileName);
+
 	BFSShortestPath<int> bfsShortPath(&graph, 1, 5);
 	graph.BFS(&bfsShortPath);		
+	KWGraph::EndMiniProfile(PathProfileId_BFSTotal);
 }

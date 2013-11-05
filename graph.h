@@ -11,6 +11,7 @@
 #	include <cstdio>
 #	include <cstdlib>
 #	include <ctime>
+#   include <set> 
 
 #	if defined(__linux__) || defined(__APPLE__)
 #		include <sys/time.h>
@@ -109,7 +110,9 @@ namespace KWGraph
 		std::vector< T >        m_matrix;
 		std::vector< Node<T> >  m_nodes;
 		std::vector< Edge<T> >  m_edges;
+        std::set<long long>     m_existingEdges;
 		StorageType             m_storageType;
+		size_t					m_edgeId;
 		void                    InvalidateParents()
 		{
 			size_t nrNodes = m_nodes.size();
@@ -118,6 +121,7 @@ namespace KWGraph
 				m_nodes[nodeIt].parent = INVALID_ID;
 			}
 		}
+
 	public:
 		
 		typedef std::vector< Edge<T> > EdgeVector;
@@ -184,12 +188,11 @@ namespace KWGraph
 			m_edges.push_back(newEdge);
 			//TODO handle errors in case the vector cannot resize
 			m_nodes[sourceId].edges.push_back(edgeId);
-			
 			if(directed)
 			{
+                edgeId = m_edges.size();
 				newEdge.source = destId;
 				newEdge.destination = sourceId;
-				edgeId = m_edges.size();
 				m_edges.push_back(newEdge);
 				m_nodes[destId].edges.push_back(edgeId);
 			}
@@ -317,27 +320,34 @@ namespace KWGraph
 				isRandomEngineOn = true;
 				srand(seed);
 			}
+	
+            const int maxExpectedSparseEdges = 10;
+			float edgeChance = (isSparse) ? maxExpectedSparseEdges / (float)size
+                                          : 0.8f;
 
 			m_nodes.resize(size);	
 			for(size_t nodeIt = 0; nodeIt < size; ++nodeIt)
-				m_nodes[nodeIt].id = nodeIt;		
-
+			{
+				m_nodes[nodeIt].id = nodeIt;
+				m_nodes[nodeIt].edges.reserve(size * edgeChance);
+			}
+		    size_t reserveSize = size * size * edgeChance * edgeChance; 
+            if(isDirected)
+                reserveSize *= 2;
+            m_edges.resize(reserveSize);
 			for(size_t nodeIt = 0; nodeIt < size; ++nodeIt)
 			{
 				Node<T>& newNode = m_nodes[nodeIt];			
 				newNode.weight = T(rand() / (float)RAND_MAX);
-				float edgeChance = (isSparse) 	? 0.2f
-												: 0.8f;
 				for(size_t edgeIt = 0; edgeIt < size; ++edgeIt)
 				{
-					newNode.edges.reserve(size * edgeChance);
 					float randomChance = rand() / (float)RAND_MAX;		
 					if(randomChance < edgeChance)
 					{
 						if(!isCyclic && edgeIt == nodeIt)
 							continue;
 						T edgeWeight = T(rand() / (float)RAND_MAX);
-						AddEdge(nodeIt, edgeIt, edgeWeight, isDirected);
+                        AddEdge(nodeIt, edgeIt, edgeWeight, isDirected);
 					}
 				}
 
@@ -352,6 +362,7 @@ namespace KWGraph
 					AddEdge(nodeIt, connectionIndex, edgeWeight, isDirected);
 				}
 			}
+            m_existingEdges.clear();
 		}
 
 		void BFSAddNextComponentNode(GraphVisitor<T>* visitor, 
@@ -411,7 +422,7 @@ namespace KWGraph
 				{
 					NodeAction action = visitor->OnBeginNodeProcess(*crNode);
 					if(action == NodeAction_Abort)
-						return;
+						break;
 					if(action == NodeAction_SkipChildren)
 					{
 						if(visitQueue.empty())
@@ -426,7 +437,7 @@ namespace KWGraph
 					{
 						NodeAction action = visitor->OnNodeAlreadyVisited(*crNode);
 						if(action == NodeAction_Abort)
-							return;
+							break;
 					}
 					if(visitQueue.empty())
 						BFSAddNextComponentNode(visitor, visitQueue, visitedNodes);
@@ -438,7 +449,7 @@ namespace KWGraph
 				{
 					NodeAction action = visitor->OnNodeProcess(*crNode);
 					if(action == NodeAction_Abort)
-						return;
+						break;
 					if(action == NodeAction_SkipChildren)
 					{
 						if(visitQueue.empty())
@@ -461,7 +472,7 @@ namespace KWGraph
 				{
 					NodeAction action = visitor->OnEndNodeProcess(*crNode);
 					if(action == NodeAction_Abort)
-						return;
+						break;
 				}
 
 				if(visitQueue.empty())
@@ -720,11 +731,12 @@ namespace KWGraph
 
 		ProfileDataType profileTime = GetProfileTime() - profileData.time;
 		profileData.inProgress = false;
+		float timeInSeconds = GetSeconds(profileTime);		
 		if(profileData.name)
-            printf("Total time spent in test %s: %lld ms\n", 
-                                             profileData.name, profileTime);
+            printf("Total time spent in test %s: %g seconds\n", 
+                                             profileData.name, timeInSeconds);
 		else
-			printf("Total time spent in test: %lld ms\n", profileTime);
+			printf("Total time spent in test: %g seconds\n", timeInSeconds);
 	}
 
 	static inline bool IsInProgress(int profileId)
