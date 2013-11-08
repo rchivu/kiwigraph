@@ -75,10 +75,10 @@ int main()
 {
 	KWGraph::IntGraph graph;
 	KWGraph::IntPrinter printer(&graph, 1);
-	graph.InitializeGraph(10000,KWGraph::GraphCreationFlags_Sparse    |
+	graph.ThreadedInitializeGraph(10000,KWGraph::GraphCreationFlags_Sparse    |
                                  KWGraph::GraphCreationFlags_Consistent|
                                  KWGraph::GraphCreationFlags_Connected, 
-                                 KWGraph::StorageType_AdjacencyList);
+                                 1000, KWGraph::StorageType_AdjacencyList, 4);
 	
 	const char* profileName = profileNames[PathProfileId_BFSTotal];
     KWGraph::StartMiniProfile(PathProfileId_BFSTotal, profileName);

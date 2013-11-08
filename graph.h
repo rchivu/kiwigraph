@@ -6,6 +6,7 @@
 // so we want to give them the option not to have thse includes
 #    include <vector>
 #    include <queue>
+#    include <set>
 #    include <algorithm>
 #    include <assert.h>
 #    include <cstdio>
@@ -19,6 +20,8 @@
 #    endif
 
 #endif
+
+#include "platform.h"
 
 namespace KWGraph
 {
@@ -90,15 +93,60 @@ namespace KWGraph
 
     namespace
     {
+        template <typename T>
+        struct EdgeCreateData
+        {
+            std::vector< Edge<T> >  edges;
+            Node<T>*                node;
+            int                     nrNodes;
+            int                     nrConnections;
+            T                       weightScale;
+            bool                    directed;
+        };
+
         static int commonSeed = 1234;
         static bool isRandomEngineOn = false;
+
+        static void  StartRandomEngine(bool isConsistent)
+        {
+            if(!isRandomEngineOn)
+                return;
+
+            time_t timeSeed = time(NULL);
+            int seed = isConsistent ? commonSeed 
+                                    : (int)timeSeed;
+            isRandomEngineOn = true;
+            srand(seed);
+        }
+        template <typename T>
+        static void* CreateGraphEdges(void* userData)
+        {
+            EdgeCreateData<T>* data = static_cast<EdgeCreateData<T>*>(userData);
+            //make edges in a local copy to avoid false sharing
+            std::set<int> connections;
+            std::vector< Edge<T> > outEdges;
+
+            for(int edgeIt = 0; edgeIt < data->nrConnections; ++edgeIt)
+            {
+                int connectionNodeId = rand() % data->nrNodes;
+                if(connections.find(connectionNodeId) != connections.end())
+                    continue;
+                Edge<T> newEdge;
+                newEdge.weight = T(rand()/(float)RAND_MAX) * data->weightScale;
+                newEdge.destination = connectionNodeId;
+                newEdge.source = data->node->id;
+                outEdges.push_back(newEdge);
+                connections.insert(connectionNodeId);
+
+            }
+            data->edges = outEdges;
+        }
     }
 
     // A general purpose representation for a graph, supports adjacency matrices
     // and adjacency lists for storage
     // NOTE: Most functions are overloaded on purpose to avoid the evils of 
-    // default parameters
-    
+    // default parameters    
 
     template <typename T>
     class Graph
@@ -110,13 +158,32 @@ namespace KWGraph
         std::vector< Node<T> >  m_nodes;
         std::vector< Edge<T> >  m_edges;
         StorageType             m_storageType;
-        void                    InvalidateParents()
+        
+        static const int m_maxSparseConnections = 10;
+        static const float m_denseEdgeChance = 0.8f;
+
+        void InvalidateParents()
         {
             size_t nrNodes = m_nodes.size();
             for(size_t nodeIt = 0; nodeIt < nrNodes; ++nodeIt)
             {
                 m_nodes[nodeIt].parent = INVALID_ID;
             }
+        }
+        
+        void InitGraphStorage(int size, float edgeChance, bool isDirected)
+        {
+            m_nodes.resize(size);    
+            for(size_t nodeIt = 0; nodeIt < size; ++nodeIt)
+            {
+                m_nodes[nodeIt].id = nodeIt;
+                m_nodes[nodeIt].edges.reserve(size * edgeChance);
+            }
+
+            size_t reserveSize = size * size * edgeChance * edgeChance; 
+            if(!isDirected)
+                reserveSize *= 2;
+            m_edges.reserve(reserveSize);
         }
 
     public:
@@ -296,45 +363,26 @@ namespace KWGraph
             m_matrix.resize(m_nodes.size() * m_nodes.size());
         }
 
-
         static void SetRandomEngineSeed(int seed) { commonSeed = seed; }        
-        void InitializeGraph(int size, int flags, StorageType storage)
+        void InitializeGraph(int size, int flags, T weightScale, StorageType storage)
         {
-            bool isSparse        = flags & GraphCreationFlags_Sparse;
-            bool isCyclic        = flags & GraphCreationFlags_AllowCycles;
-            bool isDirected    = flags & GraphCreationFlags_Directed;
-            bool isConnected   = flags & GraphCreationFlags_Connected;
-            bool isConsistent  = flags & GraphCreationFlags_Consistent;        
+            bool isSparse       = flags & GraphCreationFlags_Sparse;
+            bool isCyclic       = flags & GraphCreationFlags_AllowCycles;
+            bool isDirected     = flags & GraphCreationFlags_Directed;
+            bool isConnected    = flags & GraphCreationFlags_Connected;
+            bool isConsistent   = flags & GraphCreationFlags_Consistent;        
 
             m_storageType = storage;
+            StartRandomEngine(isConsistent);
 
-            if(!isRandomEngineOn)
-            {
-                time_t timeSeed = time(NULL);
-                int seed = isConsistent ? commonSeed 
-                                        : (int)timeSeed;
-                isRandomEngineOn = true;
-                srand(seed);
-            }
+            float edgeChance = (isSparse) ? m_maxSparseConnections / (float)size
+                                          : m_denseEdgeChance;
 
-            const int maxExpectedSparseEdges = 10;
-            float edgeChance = (isSparse) ? maxExpectedSparseEdges / (float)size
-                                          : 0.8f;
-
-            m_nodes.resize(size);    
-            for(size_t nodeIt = 0; nodeIt < size; ++nodeIt)
-            {
-                m_nodes[nodeIt].id = nodeIt;
-                m_nodes[nodeIt].edges.reserve(size * edgeChance);
-            }
-            size_t reserveSize = size * size * edgeChance * edgeChance; 
-            if(isDirected)
-                reserveSize *= 2;
-            m_edges.resize(reserveSize);
+            InitGraphStorage(size, edgeChance, isDirected);
             for(size_t nodeIt = 0; nodeIt < size; ++nodeIt)
             {
                 Node<T>& newNode = m_nodes[nodeIt];            
-                newNode.weight = T(rand() / (float)RAND_MAX);
+                newNode.weight = T(rand() / (float)RAND_MAX) * weightScale;
                 for(size_t edgeIt = 0; edgeIt < size; ++edgeIt)
                 {
                     float randomChance = rand() / (float)RAND_MAX;        
@@ -342,7 +390,7 @@ namespace KWGraph
                     {
                         if(!isCyclic && edgeIt == nodeIt)
                             continue;
-                        T edgeWeight = T(rand() / (float)RAND_MAX);
+                        T edgeWeight = T(rand() / (float)RAND_MAX) * weightScale;
                         AddEdge(nodeIt, edgeIt, edgeWeight, isDirected);
                     }
                 }
@@ -350,7 +398,7 @@ namespace KWGraph
                 if(isConnected && newNode.edges.size() == 0)
                 {
                     int connectionIndex = rand() % size;
-                    T edgeWeight = T(rand() / (float)RAND_MAX);
+                    T edgeWeight = T(rand() / (float)RAND_MAX) * weightScale;
 
                     while(!isCyclic && connectionIndex == nodeIt)
                         connectionIndex = rand() % size;
@@ -360,6 +408,54 @@ namespace KWGraph
             }
         }
 
+        void ThreadedInitializeGraph(int size, int flags, T weightScale, StorageType storage, int nrThreads)
+        {
+            bool isSparse       = flags & GraphCreationFlags_Sparse;
+            bool isCyclic       = flags & GraphCreationFlags_AllowCycles;
+            bool isDirected     = flags & GraphCreationFlags_Directed;
+            bool isConnected    = flags & GraphCreationFlags_Connected;
+            bool isConsistent   = flags & GraphCreationFlags_Consistent;        
+
+            m_storageType = storage;
+            StartRandomEngine(isConsistent);
+            float edgeChance = (isSparse) ? m_maxSparseConnections / (float)size
+                                          : m_denseEdgeChance;
+            const int nrConnections = edgeChance * size;
+            InitGraphStorage(size, edgeChance, isDirected);
+            std::vector<PThreadID> threads;
+            std::vector< EdgeCreateData<T> > edgeData;
+            threads.resize(nrThreads);
+            int crThreadId = 0;
+            edgeData.resize(size);
+            for(size_t nodeIt = 0; nodeIt < size; ++nodeIt)
+            {
+                EdgeCreateData<T>& data = edgeData[nodeIt];
+                data.node = &m_nodes[nodeIt];
+                data.nrNodes = size;
+                data.nrConnections = nrConnections;
+                data.weightScale = weightScale;
+                data.directed = isDirected;
+
+                PWaitOnThread(threads[crThreadId], NULL);
+                PStartThread((void*)&edgeData[nodeIt], CreateGraphEdges<T>, threads[crThreadId]);
+
+                crThreadId = (crThreadId + 1) % nrThreads;
+            }
+            for(size_t threadIt = 0; threadIt < nrThreads; ++threadIt)
+                PWaitOnThread(threads[crThreadId], NULL);
+
+            for(size_t nodeIt = 0; nodeIt < size; ++nodeIt)
+            {
+                EdgeCreateData<T>& data = edgeData[nodeIt];
+                for(size_t dataIt = 0; dataIt < data.edges.size(); ++dataIt)
+                {
+                    int edgeId = m_edges.size();
+                    m_edges.push_back(data.edges[dataIt]);
+                    data.node->edges.push_back(edgeId);
+                }
+            }
+
+        }
         void BFSAddNextComponentNode(GraphVisitor<T>* visitor, 
                                      std::queue<Node<T>*>& visitQueue,
                                      std::vector<bool>& visitedNodes)
